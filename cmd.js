@@ -144,7 +144,7 @@ async function getComputeURL(settings) {
 async function getSettings() {
   let file = await readFile(settingsFileName);
   let settings = JSON.parse(file);
-  if (settings && settings.auth && settings.auth.data && settings.auth.data.token === undefined) {
+  if (!(settings && settings.auth && settings.auth.data && settings.auth.data.token)) {
     settings = await loadAuth(settings);
   }
   return settings;
@@ -174,7 +174,6 @@ async function loadAuth(settings) {
     };
 
     let r = await request(`${settings.credentials.url}`, opts);
-
     settings.auth = {
       token: r.headers['x-subject-token'],
       data: JSON.parse(r.body)
