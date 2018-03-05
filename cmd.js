@@ -30,7 +30,7 @@ async function main(){
     let flv = mapArrayByValue(f.flavors, 'id');
     printCloud(srv, flv);
   }
-  else if (cmd === 'cloud.json') {
+  else if (cmd === 'cloud-json') {
     let s = await loadServersList();
     let srvs = mapArrayByValue(s.servers, 'name');
     let res = mapCloudResult(srvs, 'OS-EXT-SRV-ATTR:hypervisor_hostname');
