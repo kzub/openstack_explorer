@@ -14,24 +14,24 @@ async function main(){
     await loadAuth(settings);
   }
   else if (cmd === 'list') {
-    let l = await loadServersList();
+    let l = await openStackRequest('/servers/detail');
     console.log(JSON.stringify(l.servers[0]))
     let map = mapArrayByValue(l.servers, 'hostId');
   }
   else if (cmd === 'flavors') {
-    let l = await loadFlavorsList();
+    let l = await openStackRequest('/flavors/detail');
     console.log(JSON.stringify(l))
     // mapArrayByValue(l.flavors, 'name');
   }
   else if (cmd === 'cloud') {
-    let s = await loadServersList();
-    let f = await loadFlavorsList();
+    let s = await openStackRequest('/servers/detail');
+    let f = await openStackRequest('/flavors/detail');
     let srv = mapArrayByValue(s.servers, 'hostId');
     let flv = mapArrayByValue(f.flavors, 'id');
     printCloud(srv, flv);
   }
   else if (cmd === 'cloud-json') {
-    let s = await loadServersList();
+    let s = await openStackRequest('/servers/detail');
     let srvs = mapArrayByValue(s.servers, 'name');
     let res = mapCloudResult(srvs, 'OS-EXT-SRV-ATTR:hypervisor_hostname');
     console.log(JSON.stringify(res));
@@ -42,33 +42,8 @@ async function main(){
 }
 main();
 
-async function requestWithAuth(url, opts) {
-  let settings = await getSettings();
-  if (!opts) {
-    opts = {};
-  }
-  if (!opts.headers) {
-    opts.headers = {};
-  }
-  if (!opts.headers['Content-Type']) {
-    opts.headers['Content-Type'] = 'application/json';
-  }
-
-  opts.headers = extend({
-    'X-Auth-Token': settings.auth.token,
-  }, opts.headers);
-
-  let r = await request(url, opts);
-  // console.log('requestWithAuth1', r.statusCode, settings.auth.token);
-  if (r.statusCode === 401) {
-    settings = await loadAuth(settings);
-    opts.headers['X-Auth-Token'] = settings.auth.token
-    r = await request(url, opts);
-    // console.log('requestWithAuth2', r.statusCode, settings.auth.token);
-  }
-  return r;
-}
-
+// formating output
+// ------------------------------------------------------
 function printCloud(srv, flv) {
   for (let s in srv) {
     let mem = 0;
@@ -87,6 +62,13 @@ function printCloud(srv, flv) {
   }
 }
 
+function printMapArray(map, field) {
+  for (let m in map) {
+    console.log(m, map[m].length);
+    console.log(map[m].map(s => s[field]).join('\n'), '\n');
+  }
+}
+
 function mapCloudResult(map, field) {
   let res = {};
   for (let m in map) {
@@ -95,23 +77,6 @@ function mapCloudResult(map, field) {
     // console.log(map[m].map(s => s.name).join('\n'), '\n');
   }
   return res;
-}
-function printMapArray(map) {
-  for (let m in map) {
-    console.log(m, map[m][0]['OS-EXT-SRV-ATTR:hypervisor_hostname']);
-    // console.log(map[m].map(s => s.name).join('\n'), '\n');
-  }
-}
-
-async function loadFlavorsList() {
-  try {
-    let settings = await getSettings();
-    let url = await getComputeURL(settings);
-    let r = await requestWithAuth(`${url}/flavors/detail`);
-    return JSON.parse(r.body);
-  } catch(e) {
-    console.log('err', e);
-  }
 }
 
 function mapArrayByValue(list, key){
@@ -123,14 +88,25 @@ function mapArrayByValue(list, key){
   return map;
 }
 
-async function loadServersList() {
+// openstack api connection
+// -----------------------------------------------------
+async function getSettings() {
+  let file = await readFile(settingsFileName);
+  let settings = JSON.parse(file);
+  if (!(settings && settings.auth && settings.auth.data && settings.auth.data.token)) {
+    settings = await loadAuth(settings);
+  }
+  return settings;
+}
+
+async function openStackRequest(path) {
   try {
     let settings = await getSettings();
     let url = await getComputeURL(settings);
-    let r = await requestWithAuth(`${url}/servers/detail`);
+    let r = await requestWithAuth(`${url}${path}`);
     return JSON.parse(r.body);
   } catch(e) {
-    console.log('err', e);
+    console.log('openStackRequest err:', e);
   }
 }
 
@@ -139,15 +115,6 @@ async function getComputeURL(settings) {
     .filter(c =>  c.type === "compute")[0]
     .endpoints.filter(e => e.interface === 'public')[0]
     .url;
-}
-
-async function getSettings() {
-  let file = await readFile(settingsFileName);
-  let settings = JSON.parse(file);
-  if (!(settings && settings.auth && settings.auth.data && settings.auth.data.token)) {
-    settings = await loadAuth(settings);
-  }
-  return settings;
 }
 
 async function loadAuth(settings) {
@@ -184,4 +151,31 @@ async function loadAuth(settings) {
     console.log('err', e);
   }
   return settings;
+}
+
+async function requestWithAuth(url, opts) {
+  let settings = await getSettings();
+  if (!opts) {
+    opts = {};
+  }
+  if (!opts.headers) {
+    opts.headers = {};
+  }
+  if (!opts.headers['Content-Type']) {
+    opts.headers['Content-Type'] = 'application/json';
+  }
+
+  opts.headers = extend({
+    'X-Auth-Token': settings.auth.token,
+  }, opts.headers);
+
+  let r = await request(url, opts);
+  // console.log('requestWithAuth1', r.statusCode, settings.auth.token);
+  if (r.statusCode === 401) {
+    settings = await loadAuth(settings);
+    opts.headers['X-Auth-Token'] = settings.auth.token
+    r = await request(url, opts);
+    // console.log('requestWithAuth2', r.statusCode, settings.auth.token);
+  }
+  return r;
 }
