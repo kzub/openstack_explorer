@@ -26,7 +26,7 @@ async function main(){
   else if (cmd === 'cloud') {
     let s = await openStackRequest('/servers/detail');
     let f = await openStackRequest('/flavors/detail');
-    let srv = mapArrayByValue(s.servers, 'hostId');
+    let srv = mapArrayByValue(s.servers, 'OS-EXT-SRV-ATTR:hypervisor_hostname' /*'hostId'*/);
     let flv = mapArrayByValue(f.flavors, 'id');
     printCloud(srv, flv);
   }
