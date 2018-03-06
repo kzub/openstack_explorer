@@ -158,15 +158,10 @@ async function requestWithAuth(url, opts) {
   if (!opts) {
     opts = {};
   }
-  if (!opts.headers) {
-    opts.headers = {};
-  }
-  if (!opts.headers['Content-Type']) {
-    opts.headers['Content-Type'] = 'application/json';
-  }
 
   opts.headers = extend({
     'X-Auth-Token': settings.auth.token,
+    'Content-Type': 'application/json'
   }, opts.headers);
 
   let r = await request(url, opts);
