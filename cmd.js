@@ -1,8 +1,9 @@
 const utils = require('./utils');
 const openstack = require('./openstack');
 const hypervisor = require('./hypervisor');
+const fs = require('fs'); // eslint-disable-line
 
-process.env.NODE_TLS_REJECT_UNAUTHORIZED = '0';
+// process.env.NODE_TLS_REJECT_UNAUTHORIZED = '0';
 
 process.on('unhandledRejection', (reason) => {
   console.log('unhandledRejection:', reason);
@@ -11,12 +12,14 @@ process.on('unhandledRejection', (reason) => {
 
 async function main() {
   const cmd = process.argv[2];
+  // ---------------------------------------------------------------------------------------------------
   if (cmd === 'auth') {
     const settings = await utils.getSettings();
     await openstack.loadAuth(settings);
     return;
   }
 
+  // ---------------------------------------------------------------------------------------------------
   if (cmd === 'list') {
     const l = await openstack.openStackRequest('/servers/detail');
     console.log(JSON.stringify(l.servers[0]));
@@ -25,6 +28,7 @@ async function main() {
     return;
   }
 
+  // ---------------------------------------------------------------------------------------------------
   if (cmd === 'flavors') {
     const l = await openstack.openStackRequest('/flavors/detail');
     console.log(JSON.stringify(l));
@@ -32,15 +36,19 @@ async function main() {
     return;
   }
 
+  // ---------------------------------------------------------------------------------------------------
   if (cmd === 'cloud') {
     const s = await openstack.openStackRequest('/servers/detail');
     const f = await openstack.openStackRequest('/flavors/detail');
+    // fs.writeFileSync('servers.json', JSON.stringify(s, null, 2));
+    // fs.writeFileSync('flavors.json', JSON.stringify(f, null, 2));
     const srv = utils.mapArrayByValue(s.servers, 'OS-EXT-SRV-ATTR:hypervisor_hostname' /* 'hostId' */);
     const flv = utils.mapArrayByValue(f.flavors, 'id');
     utils.printCloud(srv, flv);
     return;
   }
 
+  // ---------------------------------------------------------------------------------------------------
   if (cmd === 'hypervisors-la' || cmd === 'hypervisors-la2') {
     const list = await openstack.openStackRequest('/os-hypervisors/detail');
     const hypers = [];
@@ -62,6 +70,10 @@ async function main() {
     return;
   }
 
+
+  // elastic.index.size 1611931251 412272527 name=chef-nginx-2021.01.17 type=warm status=open
+
+  // ---------------------------------------------------------------------------------------------------
   if (cmd === 'cloud-json') {
     const s = await openstack.openStackRequest('/servers/detail');
     const srvs = utils.mapArrayByValue(s.servers, 'name');
@@ -70,6 +82,7 @@ async function main() {
     return;
   }
 
+  // ---------------------------------------------------------------------------------------------------
   if (cmd === 'cloud-la') {
     const s = await openstack.openStackRequest('/servers/detail');
     const activeServers = s.servers.filter(a => a.status === 'ACTIVE');
@@ -78,11 +91,12 @@ async function main() {
     const inActive = s.servers.filter(a => a.status !== 'ACTIVE');
     if (inActive.length) {
       console.log(inActive.map(a => `INACTIVE: ${a.name}`).join('\n'));
+      console.log('--------------------------');
     }
 
     const srvsHypers = utils.mapCloudResult(srvs, ['OS-EXT-SRV-ATTR:hypervisor_hostname', 'id']);
-    const hypers = hypervisor.buildHostsByHyper(srvsHypers, ['compute12.nova-msk-97.servers.com']);
-    await hypervisor.fillHypersWithVMs(hypers);
+    const hypers = hypervisor.buildHostsByHyper(srvsHypers);
+    await hypervisor.fillVMsLA(hypers);
     const sorterHypers = hypervisor.sortHypersByLA(hypers);
 
     console.log(sorterHypers.map(e => [e.name, e.sumLA.toFixed(1), e.vms.length].join(' ')).join('\n'));
@@ -101,6 +115,95 @@ async function main() {
     console.log(sorterHypers.map(e => [e.name, e.sumLA.toFixed(1), e.vms.length].join(' ')).join('\n'));
     return;
   }
+
+  // ---------------------------------------------------------------------------------------------------
+  if (cmd === 'cloud-migration') {
+    console.log(`> requesting hypervisors info...`);
+    const list = await openstack.openStackRequest('/os-hypervisors/detail');
+    console.log(`hypervisors count: ${list.hypervisors.length}`);
+
+    const hyperInfo = {};
+    for (const h of list.hypervisors) {
+      console.log(`> requesting detail info for ${h.hypervisor_hostname}...`);
+      const uptime = await openstack.openStackRequest(`/os-hypervisors/${h.id}/uptime`, 1000);
+      hyperInfo[h.hypervisor_hostname] = {
+        ...h,
+        load: hypervisor.getStatUptime(uptime.hypervisor.uptime),
+      };
+    }
+
+    console.log(`> requesting flavors info...`);
+    const fdata = await openstack.openStackRequest('/flavors/detail');
+    const flavors = utils.mapArrayByValue(fdata.flavors, 'id');
+
+    console.log(`> requesting vms info...`);
+    const s = await openstack.openStackRequest('/servers/detail');
+    const activeServers = s.servers.filter(a => a.status === 'ACTIVE');
+    const srvs = utils.mapArrayByValue(activeServers, 'name');
+    utils.fillFlavorData(srvs, flavors);
+
+    console.log('==========================');
+
+    const inActive = s.servers.filter(a => a.status !== 'ACTIVE');
+    if (inActive.length) {
+      console.log(inActive.map(a => `INACTIVE: ${a.name}`).join('\n'));
+      console.log('--------------------------');
+    }
+
+    const srvsHypers = utils.mapCloudResult(srvs, ['OS-EXT-SRV-ATTR:hypervisor_hostname', 'id', 'flavor']);
+    const hypers = hypervisor.buildHostsByHyper(srvsHypers);
+    await hypervisor.fillVMsLA(hypers);
+    const sorterHypers = hypervisor.sortHypersByLA(hypers);
+    hypervisor.fillHyperInfo(sorterHypers, hyperInfo);
+    hypervisor.sortHypersByRealLA(sorterHypers);
+
+    const beforeData = sorterHypers.map(h => {
+      return {
+        name: h.name,
+        pLA: h.sumLA.toFixed(1),
+        rLA: h.realLA.toFixed(1),
+        vms: h.vms.length,
+        mem: h.info.free_ram_mb,
+        disk: h.info.free_disk_gb,
+      };
+    });
+
+    console.log('--------------------------');
+    const totalSumLA = (sorterHypers.reduce((a, b) => a + b.sumLA, 0)).toFixed(1);
+    const totalRealLA = (sorterHypers.reduce((a, b) => a + b.realLA, 0)).toFixed(1);
+    console.log(`pLA total:${totalSumLA}, avg: ${(totalSumLA / sorterHypers.length).toFixed(1)}`);
+    console.log(`rLA total:${totalRealLA}, avg: ${(totalRealLA / sorterHypers.length).toFixed(1)}`);
+
+    const spreadLA = 1;
+    const migratePlan = hypervisor.buildNewMigrations(sorterHypers, spreadLA, ['compute8.nova-msk-97.servers.com', 'compute9.nova-msk-97.servers.com']);
+
+    console.log('--------------------------');
+    migratePlan.forEach((m) => {
+      console.log(`openstack server migrate ${m.whom} --live ${m.to} --block-migration # from:${m.from}, pLA:${m.whomLA}, to:${m.to}`);
+    });
+
+    console.log('----------------------------------------------------------------------------------------------------------------------------------------------');
+    const afterData = sorterHypers.map(h => {
+      return {
+        name: h.name,
+        pLA: h.sumLA.toFixed(1),
+        rLA: h.realLA.toFixed(1),
+        vms: h.vms.length,
+        mem: h.info.free_ram_mb,
+        disk: h.info.free_disk_gb,
+        migrations: h.migrations.join(''),
+      };
+    });
+
+    const lines = afterData.map(line => {
+      const before = beforeData.find(line2 => line2.name === line.name);
+      return `${line.name}\t${line.pLA}/${before.pLA}\t${line.rLA}/${before.rLA}\t${line.vms}/${before.vms}\t${line.mem}/${before.mem}\t${line.disk}/${before.disk}\t${line.migrations}`;
+    });
+    lines.unshift(`name\t\t\t\t\tpLA\t\trLA\t\tVMs\tMem\t\tDisk\t\tMigrations`);
+    console.log(lines.join('\n'));
+    return;
+  }
+
 
   console.log('node cmd <...>\n');
 }

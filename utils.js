@@ -31,6 +31,20 @@ exports.mapArrayByValue = (list, key) => {
   return map;
 };
 
+exports.fillFlavorData = (srvs, flavors) => {
+  for (const servername in srvs) {
+    const server = srvs[servername][0];
+    const flavor = flavors[server.flavor.id][0];
+
+    server.flavor = {
+      id: server.flavor.id,
+      name: flavor.name,
+      ram: flavor.ram,
+      vcpus: flavor.vcpus,
+      disk: flavor.disk,
+    };
+  }
+};
 
 // formating output
 // ------------------------------------------------------

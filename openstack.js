@@ -31,7 +31,7 @@ const requestWithAuth = async (url, optsIn) => {
     }
   }
 
-  // console.log('requestWithAuth', url);
+  // console.log('openstack:', url);
   let r = await request(url, opts);
   if (r.statusCode === 401) {
     settings = await exports.loadAuth(settings);
@@ -105,7 +105,7 @@ exports.openStackRequest = async (path, rateLimit) => {
     }
     const duration = Date.now() - start;
 
-    if (Number.isFinite(rateLimit) && (duration < rateLimit)) {
+    if (!cache.isEnabled() && Number.isFinite(rateLimit) && (duration < rateLimit)) {
       await utils.timeout(rateLimit - duration);
     }
 

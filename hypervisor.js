@@ -1,6 +1,6 @@
 const prometheus = require('./prometheus');
 
-const getStatUptime = (str) => {
+exports.getStatUptime = (str) => {
   // 16:09:15 up 4 days,  4:17,  0 users,  load average: 31.37, 32.69, 33.35\n
   // 15:18:07 up 36 min,  1 user,  load average: 0.75, 0.60, 0.47
   const [uptimeFull] = str.split(',');
@@ -14,7 +14,7 @@ const getStatUptime = (str) => {
 
   let [, uptime, ] = uptimeDays.split(' '); // eslint-disable-line
   uptime = +uptime;
-  // console.log(avg1, avg5, avg15, uptime);
+  // console.log(avg1, avg5, avg15, uptime, str);
   return {
     avg1,
     avg5,
@@ -30,7 +30,7 @@ exports.buildHypervisorInfo = hypers => hypers
   .map(elm => {
     return {
       name: elm.hypervisor.hypervisor_hostname,
-      ...getStatUptime(elm.hypervisor.uptime),
+      ...exports.getStatUptime(elm.hypervisor.uptime),
     };
   });
 
@@ -49,12 +49,12 @@ exports.buildScollectorMetrics = (hypers) => {
 
 exports.buildHostsByHyper = (srvsHypers, exclude) => {
   const hypers = Object.entries(srvsHypers).reduce((a, b) => {
-    const [host, [hyper, id]] = b;
+    const [host, [hyper, id, flavor]] = b;
     if (exclude && exclude.indexOf(hyper) > -1) {
       return a;
     }
     a[hyper] = a[hyper] || []; // eslint-disable-line
-    a[hyper].push({ host, id });
+    a[hyper].push({ host, id, flavor });
     return a;
   }, {});
   return hypers;
@@ -73,7 +73,7 @@ exports.getHostLA = async (host) => {
   return value || 0;
 };
 
-exports.fillHypersWithVMs = async (hypers, include) => {
+exports.fillVMsLA = async (hypers, include) => {
   for (const hyper in hypers) {
     const vms = hypers[hyper];
     // console.log(hyper, vms.length);
@@ -110,6 +110,16 @@ exports.sortHypersByLA = (hypers) => {
   });
   return sorterHypers;
 };
+
+exports.sortHypersByRealLA = (hypers) => {
+  hypers.sort((a, b) => b.realLA - a.realLA);
+};
+
+exports.fillHyperInfo = (sorterHypers, hyperInfo) =>
+  sorterHypers.forEach(h => {
+    h.info = hyperInfo[h.name];
+    h.realLA = (hyperInfo[h.name].load.avg15 || 0);
+  });
 
 exports.buildMigrations = (sorterHypers, spreadLA) => {
   const migratePlan = [];
@@ -158,6 +168,143 @@ exports.buildMigrations = (sorterHypers, spreadLA) => {
       }
 
       if (goodLA(host1) || lowLA(host1)) {
+        break;
+      }
+    }
+  }
+
+  return migratePlan;
+};
+
+
+exports.buildNewMigrations = (sorterHypers, spreadLA, testHypervisors) => {
+  const migratePlan = [];
+  sorterHypers.forEach(h => { h.migrations = h.migrations || []; });
+
+  const avg = sorterHypers.reduce((a, b) => a + b.realLA, 0) / sorterHypers.length;
+
+  const goodLA = (host) => Math.abs(host.realLA - avg) < spreadLA;
+  const lowLA = (host) => host.realLA <= (avg - spreadLA);
+  const highLA = (host) => host.realLA >= (avg + spreadLA);
+  const migrate = (hyper1, vm, hyper2) => {
+    hyper1.realLA -= vm.LA;
+    hyper2.realLA += vm.LA;
+    hyper1.sumLA -= vm.LA;
+    hyper2.sumLA += vm.LA;
+
+    hyper1.info.free_ram_mb += vm.flavor.ram;
+    hyper2.info.free_ram_mb -= vm.flavor.ram;
+
+    hyper1.info.free_disk_gb += vm.flavor.disk;
+    hyper2.info.free_disk_gb -= vm.flavor.disk;
+
+    hyper1.migrations.push('-');
+    hyper2.migrations.push('+');
+
+    migratePlan.push({
+      from: hyper1.name.split('.')[0],
+      whom: vm.host,
+      whomLA: vm.LA.toFixed(1),
+      to: hyper2.name.split('.')[0],
+    });
+    // remove from hyper1
+    hyper1.vms = hyper1.vms.filter(v => v.host !== vm.host); // eslint-disable-line
+    hyper2.vms.push(vm); // add to from hyper2
+  };
+  const fitToMigrate = (vm, hyper, ignoreLA = false) => {
+    const okLA = (hyper.realLA + vm.LA) < avg + spreadLA;
+    const okMem = (hyper.info.free_ram_mb - vm.flavor.ram > 5000) && (vm.flavor.ram < hyper.info.free_ram_mb);
+    const okDisk = (hyper.info.free_disk_gb - vm.flavor.disk > 20) && (vm.flavor.disk < hyper.info.free_disk_gb);
+    // console.log(hyper.name, (ignoreLA || okLA) && okMem && okDisk, vm.host, vm.flavor.ram, hyper.info.free_ram_mb, vm.flavor.disk, hyper.info.free_disk_gb);
+    return (ignoreLA || okLA) && okMem && okDisk;
+  };
+  const allowToMigrate = (vm) =>
+    !vm.host.match(/(pgsql|mysql|mongodb|redis|gate)/i);
+    // vm.host.match(/(search|parser|hotels|order|common|bus|seopages|railways|multimodal|statistics|pricealert|multiservice|extranet|report|queue|seo|other)-.*/i);
+  const developmentVM = (vm) => vm.host.match(/(development|sandbox|beta)/);
+  const isTestingHyper = hyper => testHypervisors.includes(hyper.name);
+
+  // сначала всё не тестовое мигрируем с compute8 & compute9 куда-нибудь
+  for (const h1 of sorterHypers) {
+    if (!isTestingHyper(h1)) {
+      continue;
+    }
+
+    for (const vm of h1.vms) {
+      if (developmentVM(vm)) {
+        continue;
+      }
+      // найти гипервизор куда поместится эта виртуалка из тестового гипервизора
+      const newHomes = sorterHypers.slice().filter(h => !isTestingHyper(h)).sort((a, b) => a.realLA - b.realLA);
+      let homeFound = false;
+      for (const h2 of newHomes) {
+        if (fitToMigrate(vm, h2)) {
+          migrate(h1, vm, h2);
+          homeFound = true;
+          break; // we found place for this vm, lets look at another vm;
+        }
+      }
+      if (!homeFound) {
+        console.log(`home not found for: ${vm.host}, ${JSON.stringify(vm)}`);
+      }
+    }
+  }
+
+  // всё тестовое мигрируем на compute8 & compute9
+  for (const h1 of sorterHypers) {
+    if (isTestingHyper(h1)) {
+      continue;
+    }
+
+    for (const vm of h1.vms) {
+      if (!developmentVM(vm)) {
+        continue;
+      }
+      // найти гипервизор куда поместится эта тестовая виртуалка
+      const newHomes = sorterHypers.slice().filter(isTestingHyper).sort((a, b) => a.realLA - b.realLA);
+      let homeFound = false;
+      for (const h2 of newHomes) {
+        if (fitToMigrate(vm, h2, true)) {
+          migrate(h1, vm, h2);
+          homeFound = true;
+          break; // we found place for this vm, lets look at another vm;
+        }
+      }
+      if (!homeFound) {
+        console.log(`home not found for: ${vm.host}, ${JSON.stringify(vm)}`);
+      }
+    }
+  }
+
+  // строим карту миграций
+  for (let i1 = 0; i1 < sorterHypers.length; i1++) {
+    // откуда
+    const hyper1 = sorterHypers[i1];
+    if (goodLA(hyper1) || lowLA(hyper1) || isTestingHyper(hyper1)) {
+      continue;
+    }
+
+    for (let i2 = sorterHypers.length - 1; i2 >= 0; i2--) {
+      // куда
+      const hyper2 = sorterHypers[i2];
+      if (highLA(hyper2)) {
+        // console.log('hyper2', hyper2.name, goodLA(hyper2) &&'GOOD', highLA(hyper2) &&'HIGH')
+        continue;
+      }
+      // console.log('hyper2 OK ',hyper2.name)
+      const vms = hyper1.vms.filter(allowToMigrate);
+
+      for (let i3 = 0; i3 < vms.length; i3++) {
+        const vm = vms[i3];
+        if (highLA(hyper2) || goodLA(hyper1) || lowLA(hyper1)) {
+          break;
+        }
+        if (fitToMigrate(vm, hyper2)) {
+          migrate(hyper1, vm, hyper2);
+        }
+      }
+
+      if (goodLA(hyper1) || lowLA(hyper1)) {
         break;
       }
     }

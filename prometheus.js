@@ -7,14 +7,14 @@ let prometheusConfig;
 // const querySelected = ('100 - (avg by (instance) (irate(node_cpu_seconds_total{job="node",mode="idle"}[5m])) * 100)');
 // eslint-disable-next-line
 // const querySelected = ('(avg by (instance) (irate(node_cpu_seconds_total{job="node",mode="iowait"}[5m])))');
-const querySelected = 'node_load1';
 exports.FetchMeetrics = async () => {
   if (!prometheusConfig) {
     prometheusConfig = await utils.getSettings('prometheus');
   }
 
   let hostsLA = {};
-  const measureTime = 5 * 60; // seconds
+  const querySelected = 'node_load15';
+  const measureTime = 15 * 60; // seconds
   const measureTimeShift = 5 * 60; // seconds
   const end = ((Date.now() / 1000) - measureTimeShift).toFixed(3);
   const start = ((Date.now() / 1000) - measureTime - measureTimeShift).toFixed(3);

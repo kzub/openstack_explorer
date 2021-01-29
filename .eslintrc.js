@@ -1,6 +1,10 @@
 module.exports = {
     "extends": "airbnb-base",
     "rules": {
+                "max-len": 0,
+                "no-param-reassign":0,
+                "quotes": 0,
+                "no-unreachable": 0,
                 "no-console": 0,
                 "no-restricted-syntax": 0,
                 "no-await-in-loop": 0,
