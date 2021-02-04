@@ -179,7 +179,8 @@ async function main() {
 
     console.log('--------------------------');
     migratePlan.forEach((m) => {
-      console.log(`openstack server migrate ${m.whom} --live ${m.to} --block-migration # from:${m.from}, pLA:${m.whomLA}, to:${m.to}`);
+      // console.log(`openstack server migrate ${m.whom} --live ${m.to} --block-migration # from:${m.from}, pLA:${m.whomLA}, to:${m.to}`);
+      console.log(`nova live-migration --block-migrate ${m.whom} ${m.to} # from:${m.from}, pLA:${m.whomLA}, to:${m.to}`);
     });
 
     console.log('----------------------------------------------------------------------------------------------------------------------------------------------');
@@ -197,10 +198,11 @@ async function main() {
 
     const lines = afterData.map(line => {
       const before = beforeData.find(line2 => line2.name === line.name);
-      return `${line.name}\t${line.pLA}/${before.pLA}\t${line.rLA}/${before.rLA}\t${line.vms}/${before.vms}\t${line.mem}/${before.mem}\t${line.disk}/${before.disk}\t${line.migrations}`;
+      return `${line.name}\t${before.pLA}->${line.pLA}\t${before.rLA}->${line.rLA}\t${before.vms}->${line.vms}\t${before.mem}->${line.mem}\t${before.disk}->${line.disk}\t${line.migrations}`;
     });
-    lines.unshift(`name\t\t\t\t\tpLA\t\trLA\t\tVMs\tMem\t\tDisk\t\tMigrations`);
+    lines.unshift(`name\t\t\t\t\tpromLA\t\trealLA\t\tVMs\tMem\t\tDisk\t\tMigrations`);
     console.log(lines.join('\n'));
+    console.log('nova migration-list')
     return;
   }
 
