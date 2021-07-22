@@ -224,18 +224,19 @@ exports.buildNewMigrations = (sorterHypers, spreadLA, testHypervisors) => {
   const developmentVM = (vm) => vm.host.match(/(development|sandbox|beta)/);
   const isTestingHyper = hyper => testHypervisors.includes(hyper.name);
 
+  const testHypers = sorterHypers.filter(h => isTestingHyper(h));
+  const prodHypers = sorterHypers.filter(h => !isTestingHyper(h));
+
   // сначала всё не тестовое мигрируем с compute8 & compute9 куда-нибудь
-  for (const h1 of sorterHypers) {
-    if (!isTestingHyper(h1)) {
-      continue;
-    }
+  for (const h1 of testHypers) {
+    // console.log('test hyper:', h1)
 
     for (const vm of h1.vms) {
       if (developmentVM(vm)) {
         continue;
       }
       // найти гипервизор куда поместится эта виртуалка из тестового гипервизора
-      const newHomes = sorterHypers.slice().filter(h => !isTestingHyper(h)).sort((a, b) => a.realLA - b.realLA);
+      const newHomes = prodHypers.slice().sort((a, b) => a.realLA - b.realLA);
       let homeFound = false;
       for (const h2 of newHomes) {
         if (fitToMigrate(vm, h2)) {
@@ -251,17 +252,15 @@ exports.buildNewMigrations = (sorterHypers, spreadLA, testHypervisors) => {
   }
 
   // всё тестовое мигрируем на compute8 & compute9
-  for (const h1 of sorterHypers) {
-    if (isTestingHyper(h1)) {
-      continue;
-    }
+  for (const h1 of prodHypers) {
+    // console.log('prod hyper:', h1)
 
     for (const vm of h1.vms) {
       if (!developmentVM(vm)) {
         continue;
       }
       // найти гипервизор куда поместится эта тестовая виртуалка
-      const newHomes = sorterHypers.slice().filter(isTestingHyper).sort((a, b) => a.realLA - b.realLA);
+      const newHomes = testHypers.slice().sort((a, b) => a.realLA - b.realLA);
       let homeFound = false;
       for (const h2 of newHomes) {
         if (fitToMigrate(vm, h2, true)) {
@@ -287,7 +286,7 @@ exports.buildNewMigrations = (sorterHypers, spreadLA, testHypervisors) => {
     for (let i2 = sorterHypers.length - 1; i2 >= 0; i2--) {
       // куда
       const hyper2 = sorterHypers[i2];
-      if (highLA(hyper2)) {
+      if (highLA(hyper2) || isTestingHyper(hyper2)) {
         // console.log('hyper2', hyper2.name, goodLA(hyper2) &&'GOOD', highLA(hyper2) &&'HIGH')
         continue;
       }
