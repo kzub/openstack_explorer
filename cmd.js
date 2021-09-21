@@ -133,7 +133,7 @@ async function main() {
     }
 
     console.log(`> requesting flavors info...`);
-    const fdata = await openstack.openStackRequest('/flavors/detail');
+    const fdata = await openstack.openStackRequest('/flavors/detail?is_public=None');
     const flavors = utils.mapArrayByValue(fdata.flavors, 'id');
 
     console.log(`> requesting vms info...`);

@@ -33,8 +33,15 @@ exports.mapArrayByValue = (list, key) => {
 
 exports.fillFlavorData = (srvs, flavors) => {
   for (const servername in srvs) {
-    const server = srvs[servername][0];
-    const flavor = flavors[server.flavor.id][0];
+    let server;
+    let flavor;
+    try {
+      [server] = srvs[servername];
+      [flavor] = flavors[server.flavor.id];
+    } catch (err) {
+      console.log(servername, 'no flavor data', server.flavor.id);
+      process.exit();
+    }
 
     server.flavor = {
       id: server.flavor.id,
