@@ -30,7 +30,7 @@ async function main() {
 
   // ---------------------------------------------------------------------------------------------------
   if (cmd === 'flavors') {
-    const l = await openstack.openStackRequest('/flavors/detail');
+    const l = await openstack.openStackRequest('/flavors/detail?is_public=None');
     console.log(JSON.stringify(l));
     // utils.mapArrayByValue(l.flavors, 'name');
     return;
@@ -39,7 +39,7 @@ async function main() {
   // ---------------------------------------------------------------------------------------------------
   if (cmd === 'cloud') {
     const s = await openstack.openStackRequest('/servers/detail');
-    const f = await openstack.openStackRequest('/flavors/detail');
+    const f = await openstack.openStackRequest('/flavors/detail?is_public=None');
     // fs.writeFileSync('servers.json', JSON.stringify(s, null, 2));
     // fs.writeFileSync('flavors.json', JSON.stringify(f, null, 2));
     const srv = utils.mapArrayByValue(s.servers, 'OS-EXT-SRV-ATTR:hypervisor_hostname' /* 'hostId' */);
@@ -175,12 +175,12 @@ async function main() {
     console.log(`rLA total:${totalRealLA}, avg: ${(totalRealLA / sorterHypers.length).toFixed(1)}`);
 
     const spreadLA = 1;
-    const migratePlan = hypervisor.buildNewMigrations(sorterHypers, spreadLA, ['compute8.nova-msk-97.servers.com', 'compute9.nova-msk-97.servers.com']);
+    const migratePlan = hypervisor.buildNewMigrations(sorterHypers, spreadLA, ['compute8.nova-msk-97.servers.com', 'compute9.nova-msk-97.servers.com', 'compute10.nova-msk-97.servers.com']);
 
     console.log('--------------------------');
     migratePlan.forEach((m) => {
-      // console.log(`openstack server migrate ${m.whom} --live ${m.to} --block-migration # from:${m.from}, pLA:${m.whomLA}, to:${m.to}`);
-      console.log(`nova live-migration --block-migrate ${m.whom} ${m.to} # from:${m.from}, pLA:${m.whomLA}, to:${m.to}`);
+      console.log(`openstack server migrate --live-migration --host ${m.to} --block-migration --wait --os-compute-api-version 2.56 ${m.whom}`);
+      // console.log(`nova live-migration --block-migrate ${m.whom} ${m.to} # from:${m.from}, pLA:${m.whomLA}, to:${m.to}`);
     });
 
     console.log('----------------------------------------------------------------------------------------------------------------------------------------------');
