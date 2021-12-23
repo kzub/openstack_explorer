@@ -88,9 +88,9 @@ async function main() {
     const activeServers = s.servers.filter(a => a.status === 'ACTIVE');
     const srvs = utils.mapArrayByValue(activeServers, 'name');
 
-    const inActive = s.servers.filter(a => a.status !== 'ACTIVE');
-    if (inActive.length) {
-      console.log(inActive.map(a => `INACTIVE: ${a.name}`).join('\n'));
+    const inactive = s.servers.filter(a => a.status !== 'ACTIVE');
+    if (inactive.length) {
+      console.log(inactive.map(a => `INACTIVE: ${a.name}`).join('\n'));
       console.log('--------------------------');
     }
 
@@ -118,6 +118,16 @@ async function main() {
 
   // ---------------------------------------------------------------------------------------------------
   if (cmd === 'cloud-migration') {
+    const excludeHypervisors = process.argv.filter(arg => arg.indexOf('excludeHV=') > -1).map(arg => arg.split('excludeHV=').pop());
+    const testHypervisors = process.argv.filter(arg => arg.indexOf('testHV=') > -1).map(arg => arg.split('testHV=').pop()||'');
+
+    if (!testHypervisors.length) {
+      testHypervisors.push('compute8.nova-msk-97.servers.com');
+      testHypervisors.push('compute9.nova-msk-97.servers.com');
+      testHypervisors.push('compute10.nova-msk-97.servers.com');
+      console.log('adding default test hypervisors: ', testHypervisors.join());
+    }
+
     console.log(`> requesting hypervisors info...`);
     const list = await openstack.openStackRequest('/os-hypervisors/detail');
     console.log(`hypervisors count: ${list.hypervisors.length}`);
@@ -144,13 +154,13 @@ async function main() {
 
     console.log('==========================');
 
-    const inActive = s.servers.filter(a => a.status !== 'ACTIVE');
-    if (inActive.length) {
-      console.log(inActive.map(a => `INACTIVE: ${a.name}`).join('\n'));
+    const inactive = s.servers.filter(a => a.status !== 'ACTIVE');
+    if (inactive.length) {
+      console.log(inactive.map(a => `INACTIVE: ${a.name}`).join('\n'));
       console.log('--------------------------');
     }
 
-    const srvsHypers = utils.mapCloudResult(srvs, ['OS-EXT-SRV-ATTR:hypervisor_hostname', 'id', 'flavor']);
+    const srvsHypers = utils.mapCloudResult(srvs, ['OS-EXT-SRV-ATTR:hypervisor_hostname', 'id', 'flavor', 'metadata']);
     const hypers = hypervisor.buildHostsByHyper(srvsHypers);
     await hypervisor.fillVMsLA(hypers);
     const sorterHypers = hypervisor.sortHypersByLA(hypers);
@@ -174,12 +184,11 @@ async function main() {
     console.log(`pLA total:${totalSumLA}, avg: ${(totalSumLA / sorterHypers.length).toFixed(1)}`);
     console.log(`rLA total:${totalRealLA}, avg: ${(totalRealLA / sorterHypers.length).toFixed(1)}`);
 
-    const spreadLA = 1;
-    const migratePlan = hypervisor.buildNewMigrations(sorterHypers, spreadLA, ['compute8.nova-msk-97.servers.com', 'compute9.nova-msk-97.servers.com', 'compute10.nova-msk-97.servers.com']);
+    const migratePlan = hypervisor.buildNewMigrations(sorterHypers, testHypervisors, excludeHypervisors);
 
     console.log('--------------------------');
     migratePlan.forEach((m) => {
-      console.log(`openstack server migrate --live-migration --host ${m.to} --block-migration --wait --os-compute-api-version 2.56 ${m.whom}`);
+      console.log(`openstack server migrate --live-migration --host ${m.to} --block-migration --wait --os-compute-api-version 2.56 ${m.whom} # from:${m.from}, pLA:${m.whomLA}, to:${m.to}`);
       // console.log(`nova live-migration --block-migrate ${m.whom} ${m.to} # from:${m.from}, pLA:${m.whomLA}, to:${m.to}`);
     });
 

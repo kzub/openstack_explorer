@@ -49,12 +49,13 @@ exports.buildScollectorMetrics = (hypers) => {
 
 exports.buildHostsByHyper = (srvsHypers, exclude) => {
   const hypers = Object.entries(srvsHypers).reduce((a, b) => {
-    const [host, [hyper, id, flavor]] = b;
+    const [host, [hyper, id, flavor, metadata]] = b;
     if (exclude && exclude.indexOf(hyper) > -1) {
       return a;
     }
     a[hyper] = a[hyper] || []; // eslint-disable-line
-    a[hyper].push({ host, id, flavor });
+    a[hyper].push({ host, id, flavor, metadata });
+    // console.log(host,  metadata);
     return a;
   }, {});
   return hypers;
@@ -177,14 +178,26 @@ exports.buildMigrations = (sorterHypers, spreadLA) => {
 };
 
 
-exports.buildNewMigrations = (sorterHypers, spreadLA, testHypervisors) => {
+exports.buildNewMigrations = (sorterHypers, testHypervisors, excludeHypervisors) => {
+  const spreadLA = 2; // допустимое +/- отличие от средней загрузки, когда мы с гипервизора ничего не сгружаем
   const migratePlan = [];
+
+  const isTestingHyper = hyper => testHypervisors.includes(hyper.name);
+  const toBeExcludedHyper = hyper => excludeHypervisors.includes(hyper.name);
+  const isFalse = (func) => {
+    return param => !func(param);
+  };
+  const testHypers = sorterHypers.filter(isTestingHyper).filter(isFalse(toBeExcludedHyper));
+  const prodHypers = sorterHypers.filter(isFalse(isTestingHyper)).filter(isFalse(toBeExcludedHyper));
+  const toBeExcludedHypers = sorterHypers.filter(toBeExcludedHyper);
+
+  console.log(`PROD: ${prodHypers.length}, TEST: ${testHypers.length}, EXCULDE: ${toBeExcludedHypers.length}`);
   sorterHypers.forEach(h => { h.migrations = h.migrations || []; });
 
-  const avg = sorterHypers.reduce((a, b) => a + b.realLA, 0) / sorterHypers.length;
-
-  const goodLA = (host) => Math.abs(host.realLA - avg) < spreadLA;
-  const lowLA = (host) => host.realLA <= (avg - spreadLA);
+  // подсчитываем средний LA только продовых гипервизоров
+  const avg = prodHypers.reduce((a, b) => a + b.realLA, 0) / prodHypers.length;
+  const goodLA = (host) => Math.abs(host.realLA - avg) <= spreadLA;
+  const lowLA = (host) => host.realLA <= (avg + spreadLA);
   const highLA = (host) => host.realLA >= (avg + spreadLA);
   const migrate = (hyper1, vm, hyper2) => {
     hyper1.realLA -= vm.LA;
@@ -212,25 +225,41 @@ exports.buildNewMigrations = (sorterHypers, spreadLA, testHypervisors) => {
     hyper2.vms.push(vm); // add to from hyper2
   };
   const fitToMigrate = (vm, hyper, ignoreLA = false) => {
-    const okLA = (hyper.realLA + vm.LA) < avg + spreadLA;
-    const okMem = (hyper.info.free_ram_mb - vm.flavor.ram > 5000) && (vm.flavor.ram < hyper.info.free_ram_mb);
-    const okDisk = (hyper.info.free_disk_gb - vm.flavor.disk > 20) && (vm.flavor.disk < hyper.info.free_disk_gb);
+    const okLA = (hyper.realLA + vm.LA) < (avg + spreadLA);
+    const okMem = (hyper.info.free_ram_mb - vm.flavor.ram) > 5000;
+    const okDisk = (hyper.info.free_disk_gb - vm.flavor.disk) > 20;
     // console.log(hyper.name, (ignoreLA || okLA) && okMem && okDisk, vm.host, vm.flavor.ram, hyper.info.free_ram_mb, vm.flavor.disk, hyper.info.free_disk_gb);
     return (ignoreLA || okLA) && okMem && okDisk;
   };
   const allowToMigrate = (vm) =>
     !vm.host.match(/(pgsql|mysql|mongodb|redis|gate)/i);
     // vm.host.match(/(search|parser|hotels|order|common|bus|seopages|railways|multimodal|statistics|pricealert|multiservice|extranet|report|queue|seo|other)-.*/i);
+
   const developmentVM = (vm) => vm.host.match(/(development|sandbox|beta)/);
-  const isTestingHyper = hyper => testHypervisors.includes(hyper.name);
 
-  const testHypers = sorterHypers.filter(h => isTestingHyper(h));
-  const prodHypers = sorterHypers.filter(h => !isTestingHyper(h));
+  // сначала очищаем гипервизор, который хотим освободить
+  //----------------------------------------------------------------------
+  for (const h1 of toBeExcludedHypers) {
+    for (const vm of h1.vms) {
+      // найти гипервизор куда поместится эта виртуалка
+      const newHomes = prodHypers.slice().sort((a, b) => a.realLA - b.realLA);
+      let homeFound = false;
+      for (const h2 of newHomes) {
+        if (fitToMigrate(vm, h2, true)) {
+          migrate(h1, vm, h2);
+          homeFound = true;
+          break; // we found place for this vm, lets look at another vm;
+        }
+      }
+      if (!homeFound) {
+        console.log(`home[1] not found for: ${vm.host}, ${JSON.stringify(vm)}`);
+      }
+    }
+  }
 
-  // сначала всё не тестовое мигрируем с compute8 & compute9 куда-нибудь
+  // сначала всё не тестовое мигрируем c тестовых гипервизоров куда-нибудь
+  //----------------------------------------------------------------------
   for (const h1 of testHypers) {
-    // console.log('test hyper:', h1)
-
     for (const vm of h1.vms) {
       if (developmentVM(vm)) {
         continue;
@@ -239,22 +268,21 @@ exports.buildNewMigrations = (sorterHypers, spreadLA, testHypervisors) => {
       const newHomes = prodHypers.slice().sort((a, b) => a.realLA - b.realLA);
       let homeFound = false;
       for (const h2 of newHomes) {
-        if (fitToMigrate(vm, h2)) {
+        if (fitToMigrate(vm, h2, true)) {
           migrate(h1, vm, h2);
           homeFound = true;
           break; // we found place for this vm, lets look at another vm;
         }
       }
       if (!homeFound) {
-        console.log(`home not found for: ${vm.host}, ${JSON.stringify(vm)}`);
+        console.log(`home[1] not found for: ${vm.host}, ${JSON.stringify(vm)}`);
       }
     }
   }
 
-  // всё тестовое мигрируем на compute8 & compute9
+  // всё тестовое мигрируем на тестовые гипервизоры
+  //----------------------------------------------------------------------
   for (const h1 of prodHypers) {
-    // console.log('prod hyper:', h1)
-
     for (const vm of h1.vms) {
       if (!developmentVM(vm)) {
         continue;
@@ -270,23 +298,24 @@ exports.buildNewMigrations = (sorterHypers, spreadLA, testHypervisors) => {
         }
       }
       if (!homeFound) {
-        console.log(`home not found for: ${vm.host}, ${JSON.stringify(vm)}`);
+        console.log(`home[2] not found for: ${vm.host}, ${JSON.stringify(vm)}`);
       }
     }
   }
 
-  // строим карту миграций
-  for (let i1 = 0; i1 < sorterHypers.length; i1++) {
+  // строим карту миграций для всего остального прода
+  //----------------------------------------------------------------------
+  for (let i1 = 0; i1 < prodHypers.length; i1++) {
     // откуда
-    const hyper1 = sorterHypers[i1];
-    if (goodLA(hyper1) || lowLA(hyper1) || isTestingHyper(hyper1)) {
+    const hyper1 = prodHypers[i1];
+    if (goodLA(hyper1) || lowLA(hyper1)) {
       continue;
     }
 
-    for (let i2 = sorterHypers.length - 1; i2 >= 0; i2--) {
+    for (let i2 = prodHypers.length - 1; i2 >= 0; i2--) {
       // куда
-      const hyper2 = sorterHypers[i2];
-      if (highLA(hyper2) || isTestingHyper(hyper2)) {
+      const hyper2 = prodHypers[i2];
+      if (highLA(hyper2)) {
         // console.log('hyper2', hyper2.name, goodLA(hyper2) &&'GOOD', highLA(hyper2) &&'HIGH')
         continue;
       }
