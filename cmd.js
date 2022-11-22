@@ -122,9 +122,9 @@ async function main() {
     const testHypervisors = process.argv.filter(arg => arg.indexOf('testHV=') > -1).map(arg => arg.split('testHV=').pop()||'');
 
     if (!testHypervisors.length) {
-      testHypervisors.push('compute8.nova-msk-97.servers.com');
       testHypervisors.push('compute9.nova-msk-97.servers.com');
       testHypervisors.push('compute10.nova-msk-97.servers.com');
+      testHypervisors.push('compute11.nova-msk-97.servers.com');
       console.log('adding default test hypervisors: ', testHypervisors.join());
     }
 
